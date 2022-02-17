@@ -8,48 +8,9 @@ import random
 
 h_dim = 400
 batchsz = 512
+noise_size = 4
+feature_size = 4
 viz = visdom.Visdom()
-
-
-class Generator(nn.Module):
-
-    def __init__(self):
-        super(Generator, self).__init__()
-
-        self.net = nn.Sequential(
-            nn.Linear(2, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, 2),
-        )
-
-    def forward(self, z):
-        output = self.net(z)
-        return output
-
-
-class Discriminator(nn.Module):
-
-    def __init__(self):
-        super(Discriminator, self).__init__()
-
-        self.net = nn.Sequential(
-            nn.Linear(2, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, h_dim),
-            nn.ReLU(True),
-            nn.Linear(h_dim, 1),
-            nn.Sigmoid()
-        )
-
-    def forward(self, x):
-        output = self.net(x)
-        return output.view(-1)
 
 
 def data_generator():
@@ -68,14 +29,61 @@ def data_generator():
     while True:
         dataset = []
         for i in range(batchsz):
-            point = np.random.randn(2) * .02
+            point1 = np.random.randn(2) * .02
             center = random.choice(centers)
-            point[0] += center[0]
-            point[1] += center[1]
-            dataset.append(point)
+            point1[0] += center[0]
+            point1[1] += center[1]
+
+            point2 = np.random.randn(2) * .02
+            center = random.choice(centers)
+            point2[0] += center[0]
+            point2[1] += center[1]
+
+            dataset.append(np.concatenate((point1, point2), axis=0))
         dataset = np.array(dataset, dtype='float32')
         dataset /= 1.414  # stdev
         yield dataset
+
+
+class Generator(nn.Module):
+
+    def __init__(self):
+        super(Generator, self).__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(noise_size, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, feature_size),
+        )
+
+    def forward(self, z):
+        output = self.net(z)
+        return output
+
+
+class Discriminator(nn.Module):
+
+    def __init__(self):
+        super(Discriminator, self).__init__()
+
+        self.net = nn.Sequential(
+            nn.Linear(feature_size, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, h_dim),
+            nn.ReLU(True),
+            nn.Linear(h_dim, 1),
+            nn.Sigmoid()
+        )
+
+    def forward(self, x):
+        output = self.net(x)
+        return output.view(-1)
 
     # for i in range(100000//25):
     #     for x in range(-2, 3):
@@ -139,13 +147,6 @@ def weights_init(m):
 
 
 def gradient_penalty(D, xr, xf):
-    """
-
-    :param D:
-    :param xr:
-    :param xf:
-    :return:
-    """
     LAMBDA = 0.3
 
     # only constrait for Discriminator
@@ -185,9 +186,6 @@ def main():
     data_iter = data_generator()
     print('batch:', next(data_iter).shape)
 
-    viz.line([[0, 0]], [0], win='loss', opts=dict(title='loss',
-                                                  legend=['D', 'G']))
-
     for epoch in range(50000):
 
         # 1. train discriminator for k steps
@@ -201,7 +199,7 @@ def main():
             lossr = - (predr.mean())
 
             # [b, 2]
-            z = torch.randn(batchsz, 2).cuda()
+            z = torch.randn(batchsz, noise_size).cuda()
             # stop gradient on G
             # [b, 2]
             xf = G(z).detach()
@@ -221,7 +219,7 @@ def main():
             optim_D.step()
 
         # 2. train Generator
-        z = torch.randn(batchsz, 2).cuda()
+        z = torch.randn(batchsz, noise_size).cuda()
         xf = G(z)
         predf = (D(xf))
         # max predf
@@ -231,11 +229,16 @@ def main():
         optim_G.step()
 
         if epoch % 100 == 0:
-            viz.line([[loss_D.item(), loss_G.item()]], [epoch], win='loss', update='append')
+            viz.line([[loss_D.item(), loss_G.item(), gp.item()]],
+                     [[epoch, epoch, epoch]],
+                     win='loss',
+                     update='append',
+                     opts={"title": "loss", "legend": ["loss d", "loss g", "gp"]}
+                     )
 
-            generate_image(D, G, xr, epoch)
+            # generate_image(D, G, xr, epoch)
 
-            print(loss_D.item(), loss_G.item())
+            print(loss_D.item(), loss_G.item(), gp.item())
 
 
 if __name__ == '__main__':

@@ -1,13 +1,15 @@
-import numpy as np
 import torch
-import torch.nn as nn
-import torch.autograd as autograd
-import torch.optim as optim
+from torch import nn, optim, autograd
+import numpy as np
 import visdom
+from torch.nn import functional as F
+from matplotlib import pyplot as plt
+import random
 
-feature_size = 4
 h_dim = 400
-batch_size = 32
+batchsz = 512
+noise_size = 4
+feature_size = 4
 viz = visdom.Visdom()
 
 
@@ -16,20 +18,48 @@ def data_generator():
 
     while True:
         dataset = []
-        for i in range(batch_size):
+        for i in range(batchsz):
             size = np.random.uniform(0, 50, 2).astype(np.float32)
-            lt = center - size
-            rb = center + size
-            wh = rb - lt
+            # size = np.random.randn(2).astype(np.float32)
+            lt = (center - size) / 100
+            rb = (center + size) / 100
             dataset.append(np.concatenate((lt, rb), axis=0))
-        yield np.array(dataset)
+        dataset = np.array(dataset)
+        # max_val = dataset.max()
+        # dataset = dataset / max_val
+        yield dataset
 
 
-def weights_init(m):
-    if isinstance(m, nn.Linear):
-        # m.weight.data.normal_(0.0, 0.02)
-        nn.init.kaiming_normal_(m.weight)
-        m.bias.data.fill_(0)
+# def data_generator():
+#     scale = 2.
+#     centers = [
+#         (1, 0),
+#         (-1, 0),
+#         (0, 1),
+#         (0, -1),
+#         (1. / np.sqrt(2), 1. / np.sqrt(2)),
+#         (1. / np.sqrt(2), -1. / np.sqrt(2)),
+#         (-1. / np.sqrt(2), 1. / np.sqrt(2)),
+#         (-1. / np.sqrt(2), -1. / np.sqrt(2))
+#     ]
+#     centers = [(scale * x, scale * y) for x, y in centers]
+#     while True:
+#         dataset = []
+#         for i in range(batchsz):
+#             point1 = np.random.randn(2) * .02
+#             center = random.choice(centers)
+#             point1[0] += center[0]
+#             point1[1] += center[1]
+#
+#             point2 = np.random.randn(2) * .02
+#             center = random.choice(centers)
+#             point2[0] += center[0]
+#             point2[1] += center[1]
+#
+#             dataset.append(np.concatenate((point1, point2), axis=0))
+#         dataset = np.array(dataset, dtype='float32')
+#         dataset /= 1.414  # stdev
+#         yield dataset
 
 
 class Generator(nn.Module):
@@ -73,21 +103,35 @@ class Discriminator(nn.Module):
         return output.view(-1)
 
 
+def weights_init(m):
+    if isinstance(m, nn.Linear):
+        # m.weight.data.normal_(0.0, 0.02)
+        nn.init.kaiming_normal_(m.weight)
+        m.bias.data.fill_(0)
+
+
 def gradient_penalty(D, xr, xf):
     LAMBDA = 0.3
+
     # only constrait for Discriminator
     xf = xf.detach()
     xr = xr.detach()
+
     # [b, 1] => [b, 2]
-    alpha = torch.rand(batch_size, 1).cuda()
+    alpha = torch.rand(batchsz, 1).cuda()
     alpha = alpha.expand_as(xr)
+
     interpolates = alpha * xr + ((1 - alpha) * xf)
     interpolates.requires_grad_()
+
     disc_interpolates = D(interpolates)
+
     gradients = autograd.grad(outputs=disc_interpolates, inputs=interpolates,
                               grad_outputs=torch.ones_like(disc_interpolates),
                               create_graph=True, retain_graph=True, only_inputs=True)[0]
+
     gp = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * LAMBDA
+
     return gp
 
 
@@ -107,16 +151,19 @@ if __name__ == '__main__':
     print('batch:', next(data_iter).shape)
 
     for epoch in range(50000):
+
+        # 1. train discriminator for k steps
         for _ in range(5):
             x = next(data_iter)
             xr = torch.from_numpy(x).cuda()
+
             # [b]
             predr = (D(xr))
             # max log(lossr)
             lossr = - (predr.mean())
 
             # [b, 2]
-            z = torch.randn(batch_size, feature_size).cuda()
+            z = torch.randn(batchsz, noise_size).cuda()
             # stop gradient on G
             # [b, 2]
             xf = G(z).detach()
@@ -134,8 +181,9 @@ if __name__ == '__main__':
             # for p in D.parameters():
             #     print(p.grad.norm())
             optim_D.step()
+
         # 2. train Generator
-        z = torch.randn(batch_size, feature_size).cuda()
+        z = torch.randn(batchsz, noise_size).cuda()
         xf = G(z)
         predf = (D(xf))
         # max predf
@@ -145,10 +193,13 @@ if __name__ == '__main__':
         optim_G.step()
 
         if epoch % 100 == 0:
-            viz.line([[loss_D.item(), loss_G.item()]],
-                     [[epoch, epoch]],
+            viz.line([[loss_D.item(), loss_G.item(), gp.item()]],
+                     [[epoch, epoch, epoch]],
                      win='loss',
                      update='append',
-                     opts={"title": "loss", "legend": ["loss d", "loss g"]}
+                     opts={"title": "loss", "legend": ["loss d", "loss g", "gp"]}
                      )
-            print(loss_D.item(), loss_G.item())
+
+            # generate_image(D, G, xr, epoch)
+
+            print(loss_D.item(), loss_G.item(), gp.item())
