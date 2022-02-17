@@ -1,14 +1,15 @@
-import  torch
-from    torch import nn, optim, autograd
-import  numpy as np
-import  visdom
-from    torch.nn import functional as F
-from    matplotlib import pyplot as plt
-import  random
+import torch
+from torch import nn, optim, autograd
+import numpy as np
+import visdom
+from torch.nn import functional as F
+from matplotlib import pyplot as plt
+import random
 
 h_dim = 400
 batchsz = 512
 viz = visdom.Visdom()
+
 
 class Generator(nn.Module):
 
@@ -50,8 +51,8 @@ class Discriminator(nn.Module):
         output = self.net(x)
         return output.view(-1)
 
-def data_generator():
 
+def data_generator():
     scale = 2.
     centers = [
         (1, 0),
@@ -113,22 +114,21 @@ def generate_image(D, G, xr, epoch):
 
     # draw contour
     with torch.no_grad():
-        points = torch.Tensor(points).cuda() # [16384, 2]
-        disc_map = D(points).cpu().numpy() # [16384]
+        points = torch.Tensor(points).cuda()  # [16384, 2]
+        disc_map = D(points).cpu().numpy()  # [16384]
     x = y = np.linspace(-RANGE, RANGE, N_POINTS)
     cs = plt.contour(x, y, disc_map.reshape((len(x), len(y))).transpose())
     plt.clabel(cs, inline=1, fontsize=10)
     # plt.colorbar()
 
-
     # draw samples
     with torch.no_grad():
-        z = torch.randn(batchsz, 2).cuda() # [b, 2]
-        samples = G(z).cpu().numpy() # [b, 2]
-    plt.scatter(xr[:, 0], xr[:, 1], c='orange', marker='.')
+        z = torch.randn(batchsz, 2).cuda()  # [b, 2]
+        samples = G(z).cpu().numpy()  # [b, 2]
+    plt.scatter(xr.cpu().numpy()[:, 0], xr[:, 1].cpu().numpy(), c='orange', marker='.')
     plt.scatter(samples[:, 0], samples[:, 1], c='green', marker='+')
 
-    viz.matplot(plt, win='contour', opts=dict(title='p(x):%d'%epoch))
+    viz.matplot(plt, win='contour', opts=dict(title='p(x):%d' % epoch))
 
 
 def weights_init(m):
@@ -136,6 +136,7 @@ def weights_init(m):
         # m.weight.data.normal_(0.0, 0.02)
         nn.init.kaiming_normal_(m.weight)
         m.bias.data.fill_(0)
+
 
 def gradient_penalty(D, xr, xf):
     """
@@ -168,8 +169,8 @@ def gradient_penalty(D, xr, xf):
 
     return gp
 
-def main():
 
+def main():
     torch.manual_seed(23)
     np.random.seed(23)
 
@@ -181,12 +182,11 @@ def main():
     optim_G = optim.Adam(G.parameters(), lr=1e-3, betas=(0.5, 0.9))
     optim_D = optim.Adam(D.parameters(), lr=1e-3, betas=(0.5, 0.9))
 
-
     data_iter = data_generator()
     print('batch:', next(data_iter).shape)
 
-    viz.line([[0,0]], [0], win='loss', opts=dict(title='loss',
-                                                 legend=['D', 'G']))
+    viz.line([[0, 0]], [0], win='loss', opts=dict(title='loss',
+                                                  legend=['D', 'G']))
 
     for epoch in range(50000):
 
@@ -220,7 +220,6 @@ def main():
             #     print(p.grad.norm())
             optim_D.step()
 
-
         # 2. train Generator
         z = torch.randn(batchsz, 2).cuda()
         xf = G(z)
@@ -231,17 +230,12 @@ def main():
         loss_G.backward()
         optim_G.step()
 
-
         if epoch % 100 == 0:
             viz.line([[loss_D.item(), loss_G.item()]], [epoch], win='loss', update='append')
 
             generate_image(D, G, xr, epoch)
 
             print(loss_D.item(), loss_G.item())
-
-
-
-
 
 
 if __name__ == '__main__':
